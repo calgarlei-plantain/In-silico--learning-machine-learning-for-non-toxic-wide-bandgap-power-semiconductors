@@ -1,0 +1,286 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyM51kKaJnDL9cx+ybunsHOw",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/calgarlei-plantain/In-silico--learning-machine-learning-for-non-toxic-wide-bandgap-power-semiconductors/blob/main/Research%202%20-%2011/19/26\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "JHg7JfBIU4rn",
+        "outputId": "5c019b4d-1ac5-410b-a632-0548d11e3941"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "  Installing build dependencies ... \u001b[?25l\u001b[?25hdone\n",
+            "  Getting requirements to build wheel ... \u001b[?25l\u001b[?25hdone\n",
+            "  Preparing metadata (pyproject.toml) ... \u001b[?25l\u001b[?25hdone\n",
+            "  Building wheel for bibtexparser (pyproject.toml) ... \u001b[?25l\u001b[?25hdone\n",
+            "\u001b[31mERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n",
+            "google-colab 1.0.0 requires requests==2.32.4, but you have requests 2.34.2 which is incompatible.\u001b[0m\u001b[31m\n",
+            "\u001b[0m"
+          ]
+        }
+      ],
+      "source": [
+        "!pip install -q mp-api matminer pymatgen xgboost optuna"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import os\n",
+        "from google.colab import userdata\n",
+        "\n",
+        "os.environ[\"MP_API_KEY\"] = userdata.get(\"MP_API_KEY\")"
+      ],
+      "metadata": {
+        "id": "CDsokHrNVBRd"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!unzip -q mp_summary.zip"
+      ],
+      "metadata": {
+        "id": "0KqL2o6gVS35"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import json, os\n",
+        "from pathlib import Path\n",
+        "\n",
+        "import pandas as pd\n",
+        "from mp_api.client import MPRester\n",
+        "from pymatgen.core import Structure\n",
+        "\n",
+        "OUT = Path(\"mp_summary\")\n",
+        "files = sorted(OUT.glob(\"batch_*.parquet\"))\n",
+        "print(len(files), \"batch files saved\")\n",
+        "print((OUT / \"db_version.txt\").read_text())\n",
+        "print(\"A failed batch was recorded:\", (OUT / \"failed_batch.txt\").exists())\n",
+        "\n",
+        "df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)\n",
+        "\n",
+        "with MPRester(os.environ[\"MP_API_KEY\"]) as mpr:\n",
+        "    total = mpr.materials.summary.count()\n",
+        "\n",
+        "# Check 1: the row count matches what the database has\n",
+        "print(f\"Check 1 (row count): {len(df)} saved, {total} in the database ->\", \"PASS\" if len(df) == total else \"FAIL\")\n",
+        "\n",
+        "# Check 2: every material_id is unique\n",
+        "n_dup = df[\"material_id\"].duplicated().sum()\n",
+        "print(f\"Check 2 (unique IDs): {n_dup} duplicate IDs ->\", \"PASS\" if n_dup == 0 else \"FAIL\")\n",
+        "\n",
+        "# Check 3: every structure loads without error\n",
+        "bad = []\n",
+        "for mid, s in zip(df[\"material_id\"], df[\"structure\"]):\n",
+        "    try:\n",
+        "        Structure.from_dict(json.loads(s))\n",
+        "    except Exception:\n",
+        "        bad.append(mid)\n",
+        "print(f\"Check 3 (structures load): {len(bad)} failed ->\", \"PASS\" if not bad else \"FAIL\")\n",
+        "if bad:\n",
+        "    print(bad[:10])"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "9Gc8GlokXYS6",
+        "outputId": "b7cb2e61-6fb4-4c58-8add-7eaf3bcf8064"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "155 batch files saved\n",
+            "database release: 2026.09.28\n",
+            "queried on: 2026-11-18\n",
+            "\n",
+            "A failed batch was recorded: False\n",
+            "Check 1 (row count): 154377 saved, 154377 in the database -> PASS\n",
+            "Check 2 (unique IDs): 0 duplicate IDs -> PASS\n",
+            "Check 3 (structures load): 0 failed -> PASS\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import json\n",
+        "from matminer.datasets import load_dataset\n",
+        "\n",
+        "mass = load_dataset(\"boltztrap_mp\")\n",
+        "print(mass.shape)\n",
+        "print(mass.columns.tolist())\n",
+        "\n",
+        "mass[\"structure\"] = mass[\"structure\"].apply(lambda s: json.dumps(s.as_dict()))\n",
+        "mass.to_parquet(\"mp_summary/boltztrap_mp.parquet\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "UmcrLCBNYkQp",
+        "outputId": "a7580301-db60-4d94-98c1-d19d17aed8c9"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Fetching boltztrap_mp.json.gz from https://ndownloader.figshare.com/files/13297511 to /usr/local/lib/python3.13/dist-packages/matminer/datasets/boltztrap_mp.json.gz\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "Fetching https://ndownloader.figshare.com/files/13297511 in MB: 14.020608MB [00:00, 146.47MB/s]                         \n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "(8924, 9)\n",
+            "['mpid', 'pf_n', 'pf_p', 's_n', 's_p', 'formula', 'm_n', 'm_p', 'structure']\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!du -sh mp_summary\n",
+        "!rm -f mp_summary.zip\n",
+        "!zip -rq mp_summary_nov18.zip mp_summary\n",
+        "from google.colab import files\n",
+        "files.download(\"mp_summary_nov18.zip\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 52
+        },
+        "id": "8lPzvQ7OYx-4",
+        "outputId": "bb6f04a5-d129-472c-a142-57d36f823ff8"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "350M\tmp_summary\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "<IPython.core.display.Javascript object>"
+            ],
+            "application/javascript": [
+              "\n",
+              "    async function download(id, filename, size) {\n",
+              "      if (!google.colab.kernel.accessAllowed) {\n",
+              "        return;\n",
+              "      }\n",
+              "      const div = document.createElement('div');\n",
+              "      const label = document.createElement('label');\n",
+              "      label.textContent = `Downloading \"${filename}\": `;\n",
+              "      div.appendChild(label);\n",
+              "      const progress = document.createElement('progress');\n",
+              "      progress.max = size;\n",
+              "      div.appendChild(progress);\n",
+              "      document.body.appendChild(div);\n",
+              "\n",
+              "      const buffers = [];\n",
+              "      let downloaded = 0;\n",
+              "\n",
+              "      const channel = await google.colab.kernel.comms.open(id);\n",
+              "      // Send a message to notify the kernel that we're ready.\n",
+              "      channel.send({})\n",
+              "\n",
+              "      for await (const message of channel.messages) {\n",
+              "        // Send a message to notify the kernel that we're ready.\n",
+              "        channel.send({})\n",
+              "        if (message.buffers) {\n",
+              "          for (const buffer of message.buffers) {\n",
+              "            buffers.push(buffer);\n",
+              "            downloaded += buffer.byteLength;\n",
+              "            progress.value = downloaded;\n",
+              "          }\n",
+              "        }\n",
+              "      }\n",
+              "      const blob = new Blob(buffers, {type: 'application/binary'});\n",
+              "      const a = document.createElement('a');\n",
+              "      a.href = window.URL.createObjectURL(blob);\n",
+              "      a.download = filename;\n",
+              "      div.appendChild(a);\n",
+              "      a.click();\n",
+              "      div.remove();\n",
+              "    }\n",
+              "  "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "<IPython.core.display.Javascript object>"
+            ],
+            "application/javascript": [
+              "download(\"download_8fa3b7cd-e975-48ab-9631-47f012809832\", \"mp_summary_nov18.zip\", 300251100)"
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    }
+  ]
+}
